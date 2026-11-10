@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,8 @@ import 'package:photo_manager/photo_manager.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/gallery_provider.dart';
+import '../services/diagnostics.dart';
+import '../services/notifications.dart';
 
 /// Light edit only: rotate, straighten, centre-crop to a preset ratio.
 /// Natural look — no filters, no AI, no saturation changes. The result is
@@ -95,6 +98,8 @@ class _EditScreenState extends State<EditScreen> {
       if (!mounted) return;
       final gallery = context.read<GalleryProvider>();
       await gallery.loadLibrary();
+      MossLog().log('export', 'Edited copy saved: moss_edit_$base.jpg');
+      unawaited(MossNotifications().showExportSaved('Edited photo'));
       if (mounted) Navigator.of(context).pop(true);
     } catch (_) {
       if (mounted) {

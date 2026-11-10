@@ -3,15 +3,23 @@
 A local, fully offline photo gallery for Android. No account, no cloud, no
 analytics, no uploads — your photos never leave your phone.
 
-## What it does (v1.1)
+## What it does (v1.1.1)
 
-- **Photos** — timeline grid with date headers. The first photo of each day
-  is a wide tile; pinch to change grid size. Sort by newest / oldest /
+- **Photos** — timeline grid with date headers and uniform rounded-rect
+  tiles. Pinch to change grid size. Sort by newest / oldest /
   largest / name / folder. Filter chips: All, Photos, Videos, Screenshots,
   Favourites, Duplicates. Filter by month (e.g. October 2026) and by size.
   Pull down at the top to expand the header (logo, counts, storage,
   Memories teaser). First page of photos appears immediately; the rest
   loads in the background, with skeleton tiles while the first page loads.
+  Every state is visible: loading shows "Loading your photos…" with a
+  progress bar, a load that fails shows an error with a retry button
+  (and a notification), a denied permission shows an "Open settings"
+  button, and an empty library says so.
+- **Diagnostics & logs** — Profile → Diagnostics & logs shows a
+  persistent log (last 500 entries: app start, permission results,
+  library load progress and errors, duplicate scans, widget errors).
+  View, copy, share/export as a text file, or clear it. Fully local.
 - **View options** — grid, compact grid, and list (thumbnail + title +
   date + size), switchable from the AppBar and remembered separately for
   Photos and for folder views.
@@ -58,6 +66,10 @@ analytics, no uploads — your photos never leave your phone.
   Forest, Dusk, Sand, Midnight, Meadow — each with light and dark, plus
   an AMOLED black mode. Pick in Profile; the mode cycle button stays in
   the AppBar.
+- **Notifications** — local only, no server: duplicate scan finished
+  (with counts), collage / edited photo saved, and photo library failed
+  to load. Permission is asked the first time one of these fires, never
+  at first launch.
 - **Floating nav** — Photos | Albums | Search | Profile in a floating
   pill dock; page content scrolls underneath it. All screen transitions
   are a shared fade + slight slide (280ms).
@@ -67,8 +79,9 @@ analytics, no uploads — your photos never leave your phone.
 Flutter, `photo_manager` for device media, `provider` for state,
 `shared_preferences` + local JSON files for favourites / trash / locked
 metadata, `share_plus` for the system share sheet, `image` for edits and
-collage export, `video_player` for video playback,
-`flutter_staggered_grid_view` for the varied tile layout,
+collage export, `video_player` for video playback, local notifications
+via a small native MethodChannel in `MainActivity` (NotificationManager,
+no extra dependency),
 `flutter_launcher_icons` for the launcher icon (generated from
 `assets/logo.png`, drawn with `tool/make_logo.py` — no stock images).
 

@@ -12,6 +12,9 @@ import 'package:photo_manager/photo_manager.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../services/diagnostics.dart';
+import '../services/notifications.dart';
+
 enum SortMode { dateNew, dateOld, sizeLarge, name, folder }
 
 extension SortModeLabel on SortMode {
@@ -161,6 +164,11 @@ class GalleryProvider extends ChangeNotifier {
   bool get hasPermission =>
       _permission == PermissionState.authorized ||
       _permission == PermissionState.limited;
+
+  /// True once the user has denied photo access twice in a row — i.e.
+  /// Android will no longer show the system dialog and the user must go
+  /// through Settings. The permission prompt offers "Open settings" then.
+  bool permissionPermanentlyDenied = false;
 
   bool loading = false;
   String? error;
@@ -394,8 +402,26 @@ class GalleryProvider extends ChangeNotifier {
   // ----- init / loading -----
 
   Future<void> init() async {
-    await _loadLocalState();
-    _permission = await PhotoManager.requestPermissionExtend();
+    MossLog().log('app', 'Moss $kMossVersion+$kMossBuild started');
+    try {
+      await _loadLocalState();
+    } catch (e) {
+      MossLog().log(
+        'init',
+        'Failed to load local state: $e',
+        level: 'error',
+      );
+    }
+    try {
+      _permission = await PhotoManager.requestPermissionExtend();
+    } catch (e) {
+      MossLog().log(
+        'permission',
+        'Permission request failed: $e',
+        level: 'error',
+      );
+    }
+    MossLog().log('permission', 'Permission result: $_permission');
     notifyListeners();
     if (hasPermission) {
       await loadLibrary();
@@ -403,9 +429,32 @@ class GalleryProvider extends ChangeNotifier {
   }
 
   Future<void> requestPermission() async {
-    _permission = await PhotoManager.requestPermissionExtend();
+    final wasDenied = _permission == PermissionState.denied;
+    try {
+      _permission = await PhotoManager.requestPermissionExtend();
+    } catch (e) {
+      MossLog().log(
+        'permission',
+        'Permission request failed: $e',
+        level: 'error',
+      );
+    }
+    if (_permission == PermissionState.denied && wasDenied) {
+      permissionPermanentlyDenied = true;
+    }
+    MossLog().log('permission', 'Permission request result: $_permission');
     notifyListeners();
     if (hasPermission) await loadLibrary();
+  }
+
+  /// Opens the system Settings page for Moss (used when photo access was
+  /// permanently denied and Android won't show the dialog any more).
+  Future<void> openSettings() async {
+    try {
+      await PhotoManager.openSetting();
+    } catch (e) {
+      MossLog().log('permission', 'Open settings failed: $e', level: 'error');
+    }
   }
 
   /// Fast first load: the first page (~100 assets) is shown immediately;
@@ -414,6 +463,11 @@ class GalleryProvider extends ChangeNotifier {
   /// hash scan.
   int _loadGen = 0;
 
+  /// Loads the library with a 30-second watchdog: if the first page has
+  /// not arrived by then, the user gets a visible error with a retry
+  /// button (and a notification) instead of staring at a loading screen
+  /// forever. A late success still recovers: [_loadLibraryInner] clears
+  /// the error when the first page does arrive.
   Future<void> loadLibrary() async {
     _loadGen++;
     final gen = _loadGen;
@@ -421,36 +475,60 @@ class GalleryProvider extends ChangeNotifier {
     error = null;
     loadProgress = 0;
     notifyListeners();
+    MossLog().log('library', 'Load started');
     try {
-      albums = await PhotoManager.getAssetPathList(
-        type: RequestType.all,
-        onlyAll: false,
-      );
-      final all = albums.firstWhere(
-        (p) => p.isAll,
-        orElse: () => albums.first,
-      );
-      final count = await all.assetCountAsync;
-      const firstPageSize = 100;
-      final first = await all.getAssetListPaged(
-        page: 0,
-        size: firstPageSize,
-      );
-      assets = first;
-      loadProgress = count == 0 ? 1 : first.length / count;
+      await _loadLibraryInner(gen).timeout(const Duration(seconds: 30));
+    } on TimeoutException {
+      error = 'Loading your photos is taking too long. '
+          'Please check photo permission and try again.';
       loading = false;
-      _purgeExpiredTrash();
+      MossLog().log('library', 'Load timed out after 30s', level: 'error');
+      await MossNotifications().showLibraryLoadFailed(
+        'Loading your photos is taking too long. Open Moss to try again.',
+      );
       notifyListeners();
-      if (first.length < count) {
-        // Background: remaining pages, one page at a time.
-        unawaited(_loadRemainingPages(all, count, first.length, gen));
-      } else {
-        loadProgress = 1;
-        notifyListeners();
-      }
     } catch (e) {
       error = e.toString();
       loading = false;
+      MossLog().log('library', 'Load failed: $e', level: 'error');
+      await MossNotifications().showLibraryLoadFailed(
+        'Could not load your photos. Open Moss to try again.',
+      );
+      notifyListeners();
+    }
+  }
+
+  Future<void> _loadLibraryInner(int gen) async {
+    albums = await PhotoManager.getAssetPathList(
+      type: RequestType.all,
+      onlyAll: false,
+    );
+    final all = albums.firstWhere(
+      (p) => p.isAll,
+      orElse: () => albums.first,
+    );
+    final count = await all.assetCountAsync;
+    const firstPageSize = 100;
+    final first = await all.getAssetListPaged(
+      page: 0,
+      size: firstPageSize,
+    );
+    assets = first;
+    error = null; // a late success after a timeout clears the error
+    loadProgress = count == 0 ? 1 : first.length / count;
+    loading = false;
+    _purgeExpiredTrash();
+    MossLog().log(
+      'library',
+      'First page loaded: ${first.length} of $count assets',
+    );
+    notifyListeners();
+    if (first.length < count) {
+      // Background: remaining pages, one page at a time.
+      unawaited(_loadRemainingPages(all, count, first.length, gen));
+    } else {
+      loadProgress = 1;
+      MossLog().log('library', 'Load finished: $count assets');
       notifyListeners();
     }
   }
@@ -483,6 +561,10 @@ class GalleryProvider extends ChangeNotifier {
     } finally {
       if (gen == _loadGen) {
         loadingMore = false;
+        MossLog().log(
+          'library',
+          'Background load finished: ${assets.length} assets',
+        );
         notifyListeners();
       }
     }
@@ -769,6 +851,7 @@ class GalleryProvider extends ChangeNotifier {
     similarIds.clear();
     blurryIds.clear();
     notifyListeners();
+    MossLog().log('scan', 'Duplicate scan started');
     try {
       final images =
           assets.where((a) => a.type == AssetType.image).toList();
@@ -848,10 +931,29 @@ class GalleryProvider extends ChangeNotifier {
       }
     } catch (e) {
       scanStatus = 'Scan failed: $e';
+      MossLog().log('scan', 'Scan failed: $e', level: 'error');
     } finally {
       scanning = false;
       scanDone = true;
       scanProgress = _scanCancelled ? scanProgress : 1;
+      if (_scanCancelled) {
+        MossLog().log(
+          'scan',
+          'Scan stopped by user — partial results: '
+          '${duplicateGroups.length} duplicate groups so far',
+        );
+      } else {
+        MossLog().log(
+          'scan',
+          'Scan finished: ${duplicateGroups.length} duplicate groups, '
+          '${similarIds.length} similar, ${blurryIds.length} possibly blurry',
+        );
+        unawaited(MossNotifications().showScanComplete(
+          groups: duplicateGroups.length,
+          similar: similarIds.length,
+          blurry: blurryIds.length,
+        ));
+      }
       notifyListeners();
     }
   }

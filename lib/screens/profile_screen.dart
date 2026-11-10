@@ -4,8 +4,10 @@ import 'package:provider/provider.dart';
 
 import '../providers/gallery_provider.dart';
 import '../providers/theme_provider.dart';
+import '../services/diagnostics.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import 'logs_screen.dart';
 
 /// Profile tab: Moss logo + version, theme picker (6 themes + mode),
 /// and a storage breakdown. Fully offline.
@@ -74,7 +76,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                         SizedBox(height: 2),
                         Text(
-                          'Version 1.1.0',
+                          'Version $kMossVersion',
                           style: TextStyle(color: Colors.grey),
                         ),
                         SizedBox(height: 2),
@@ -307,6 +309,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   value: '${gallery.trash.length}',
                 ),
               ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Diagnostics: the persistent log — view, copy, share, clear.
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.bug_report_outlined),
+              title: const Text('Diagnostics & logs'),
+              subtitle: const Text(
+                'App log — helpful when reporting a bug',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => pushMoss(context, const LogsScreen()),
             ),
           ),
           const SizedBox(height: 16),

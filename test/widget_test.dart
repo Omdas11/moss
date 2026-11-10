@@ -31,7 +31,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     expect(find.text('Theme'), findsOneWidget);
     expect(find.text('Moss Emerald'), findsOneWidget);
-    expect(find.text('Version 1.1.0'), findsOneWidget);
+    expect(find.text('Version 1.1.1'), findsOneWidget);
   });
 
   test('Six themes, each resolvable to light and dark', () {

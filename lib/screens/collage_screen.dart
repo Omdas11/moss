@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -7,6 +8,8 @@ import 'package:photo_manager/photo_manager.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/gallery_provider.dart';
+import '../services/diagnostics.dart';
+import '../services/notifications.dart';
 import '../widgets.dart';
 
 /// 16:9 collage maker: pick 2–6 photos, choose a layout, export one 16:9
@@ -58,6 +61,8 @@ class _CollageScreenState extends State<CollageScreen> {
       if (!mounted) return;
       final gallery = context.read<GalleryProvider>();
       await gallery.loadLibrary();
+      MossLog().log('export', 'Collage saved to gallery');
+      unawaited(MossNotifications().showExportSaved('Collage'));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Collage saved to gallery.')),

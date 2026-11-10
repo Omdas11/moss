@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/gallery_provider.dart';
+import '../services/diagnostics.dart';
 import '../widgets.dart';
 import 'viewer_screen.dart';
 
@@ -36,11 +36,27 @@ class _PhotosScreenState extends State<PhotosScreen> {
     final scheme = Theme.of(context).colorScheme;
 
     if (!gallery.hasPermission) {
-      return _PermissionPrompt(onAllow: () => gallery.requestPermission());
+      return _PermissionPrompt(
+        onAllow: () => gallery.requestPermission(),
+        showSettings: gallery.permission == PermissionState.denied ||
+            gallery.permission == PermissionState.restricted ||
+            gallery.permissionPermanentlyDenied,
+        onOpenSettings: () => gallery.openSettings(),
+      );
+    }
+
+    if (gallery.error != null && gallery.assets.isEmpty) {
+      return _LoadErrorView(
+        message: gallery.error!,
+        onRetry: () => gallery.refresh(),
+      );
     }
 
     if (gallery.loading && gallery.assets.isEmpty) {
-      // Skeleton placeholders instead of a full-screen spinner.
+      // Visible loading state — title, text and progress bar, not just
+      // grey skeleton tiles, so a slow load never looks like a blank
+      // screen. (A 30s watchdog in loadLibrary turns a stuck load into
+      // a visible error with retry.)
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -53,6 +69,25 @@ class _PhotosScreenState extends State<PhotosScreen> {
               ),
             ),
           ),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              'Loading your photos…',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: LinearProgressIndicator(),
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              'This usually takes a few seconds.',
+              style: TextStyle(fontSize: 13, color: Colors.grey),
+            ),
+          ),
+          const SizedBox(height: 12),
           Expanded(
             child: GridView.builder(
               padding: const EdgeInsets.all(16),
@@ -71,8 +106,26 @@ class _PhotosScreenState extends State<PhotosScreen> {
     }
 
     if (gallery.assets.isEmpty) {
-      return const Center(
-        child: Text('No photos or videos found on this device.'),
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.photo_library_outlined, size: 48),
+              const SizedBox(height: 12),
+              const Text(
+                'No photos or videos found on this device.',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              OutlinedButton(
+                onPressed: () => gallery.refresh(),
+                child: const Text('Try again'),
+              ),
+            ],
+          ),
+        ),
       );
     }
 
@@ -95,6 +148,42 @@ class _PhotosScreenState extends State<PhotosScreen> {
             onSort: () => _showSortMenu(context, gallery),
             onFilter: () => _showFilterSheet(context, gallery),
           ),
+          // A load that failed after some photos arrived: keep the grid
+          // visible, but say so with a retry button — never fail silently.
+          if (gallery.error != null)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Card(
+                  color: scheme.errorContainer,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.error_outline,
+                          color: scheme.onErrorContainer,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Some photos could not be loaded.',
+                            style: TextStyle(
+                              color: scheme.onErrorContainer,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => gallery.refresh(),
+                          child: const Text('Try again'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
           // Filter chips
           SliverToBoxAdapter(
             child: SingleChildScrollView(
@@ -518,10 +607,58 @@ class _ViewToggle extends StatelessWidget {
   }
 }
 
+/// Full-screen error when the library could not be loaded at all:
+/// message + retry, never a blank screen.
+class _LoadErrorView extends StatelessWidget {
+  const _LoadErrorView({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 48),
+            const SizedBox(height: 12),
+            const Text(
+              "Couldn't load your photos",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: onRetry,
+              child: const Text('Try again'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _PermissionPrompt extends StatelessWidget {
-  const _PermissionPrompt({required this.onAllow});
+  const _PermissionPrompt({
+    required this.onAllow,
+    this.showSettings = false,
+    this.onOpenSettings,
+  });
 
   final VoidCallback onAllow;
+  final bool showSettings;
+  final VoidCallback? onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -539,9 +676,13 @@ class _PermissionPrompt extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Your photos stay on your phone. Moss is fully offline — '
-              'nothing is uploaded anywhere.',
+            Text(
+              showSettings
+                  ? 'Photo access was denied. Allow it again from system '
+                      'settings — Moss still cannot see your photos until '
+                      'then.'
+                  : 'Your photos stay on your phone. Moss is fully offline — '
+                      'nothing is uploaded anywhere.',
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
@@ -549,6 +690,13 @@ class _PermissionPrompt extends StatelessWidget {
               onPressed: onAllow,
               child: const Text('Allow photo access'),
             ),
+            if (showSettings && onOpenSettings != null) ...[
+              const SizedBox(height: 8),
+              OutlinedButton(
+                onPressed: onOpenSettings,
+                child: const Text('Open settings'),
+              ),
+            ],
           ],
         ),
       ),
@@ -556,9 +704,21 @@ class _PermissionPrompt extends StatelessWidget {
   }
 }
 
-/// Timeline grouped by day, with date headers. In grid view the first
-/// photo of each day is a wide tile spanning 2 columns; compact grid uses
-/// more columns with a smaller radius; list view shows rows.
+/// Timeline grouped by day, with date headers. Uniform rounded-rect
+/// grid (grid / compact / list views).
+///
+/// NOTE (v1.1.1 root-cause fix): v1.1 used SliverQuiltedGridDelegate with
+/// a per-day pattern whose first tile was 2 rows tall. That pattern
+/// leaves holes in the grid whenever a day has fewer photos than the
+/// column count (e.g. a 2-photo day with 3 columns): the delegate's
+/// internal cell index then runs past its index list and throws
+/// `RangeError (index): Invalid value: Not in inclusive range 0..2: 3`
+/// while building _TimelineSlivers — and in release mode that renders
+/// the whole Photos tab as a blank grey screen (nav survives, nothing
+/// else renders). A fixed grid cannot throw like that, so the quilted
+/// delegate is gone for good. The build below is additionally wrapped
+/// in try/catch: if the timeline ever fails again, the tab shows an
+/// error card with retry instead of a blank screen.
 class _TimelineSlivers extends StatelessWidget {
   const _TimelineSlivers({
     required this.items,
@@ -574,6 +734,48 @@ class _TimelineSlivers extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    try {
+      return _build(context);
+    } catch (e) {
+      MossLog().log(
+        'photos',
+        'Timeline failed to build: $e',
+        level: 'error',
+      );
+      return SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, size: 48),
+              const SizedBox(height: 12),
+              const Text(
+                "Couldn't show your photos",
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '$e',
+                textAlign: TextAlign.center,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () =>
+                    context.read<GalleryProvider>().refresh(),
+                child: const Text('Try again'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+  }
+
+  Widget _build(BuildContext context) {
     final gallery = context.watch<GalleryProvider>();
     // Group by day, keeping the overall order.
     final groups = <String, List<(int, AssetEntity)>>{};
@@ -653,11 +855,11 @@ class _TimelineSlivers extends StatelessWidget {
             MossView.grid => SliverPadding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 sliver: SliverGrid(
-                  gridDelegate: SliverQuiltedGridDelegate(
+                  gridDelegate:
+                      SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: columns,
                     mainAxisSpacing: 8,
                     crossAxisSpacing: 8,
-                    pattern: _quiltPattern(groups[key]!.length),
                   ),
                   delegate: SliverChildBuilderDelegate(
                     (ctx, i) {
@@ -683,17 +885,6 @@ class _TimelineSlivers extends StatelessWidget {
         ],
       ],
     );
-  }
-
-  /// First tile of the day spans 2 columns; the rest are square.
-  /// The pattern is exactly as long as the group, so it never repeats
-  /// a wide tile mid-group.
-  List<QuiltedGridTile> _quiltPattern(int count) {
-    if (count <= 1) return [const QuiltedGridTile(1, 1)];
-    return [
-      const QuiltedGridTile(2, 1),
-      for (var i = 1; i < count; i++) const QuiltedGridTile(1, 1),
-    ];
   }
 
   void _tap(

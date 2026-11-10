@@ -3,6 +3,9 @@
     <!-- Photo / video access (Android 13+). -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <!-- Local notifications (Android 13+): completion/failure events only.
+         No server, no network — Moss stays fully offline. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Photo / video access (Android 12 and older). -->
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"

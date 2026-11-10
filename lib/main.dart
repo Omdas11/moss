@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -7,9 +9,78 @@ import 'screens/albums_screen.dart';
 import 'screens/photos_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/search_screen.dart';
+import 'services/diagnostics.dart';
 
 void main() {
+  // A widget that throws during build renders as a blank grey screen in
+  // release mode (v1.1.0 Photos tab). Never let that happen silently
+  // again: log every widget/provider error, and replace the failed
+  // subtree with a visible error screen that offers a retry.
+  FlutterError.onError = (details) {
+    MossLog().log(
+      'error',
+      'Widget error: ${details.exceptionAsString()}',
+      level: 'error',
+    );
+    FlutterError.presentError(details);
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    MossLog().log('error', 'Uncaught error: $error', level: 'error');
+    return true;
+  };
+  ErrorWidget.builder = (details) => _TabErrorView(details: details);
+  MossLog().log('app', 'Moss $kMossVersion+$kMossBuild started');
   runApp(const MossApp());
+}
+
+/// Incremented when the user taps "Try again" on a tab error screen:
+/// the shell remounts the tab screens, so a transient failure recovers
+/// instead of staying blank.
+class MossErrorRecovery {
+  static final ValueNotifier<int> tick = ValueNotifier<int>(0);
+
+  static void requestRebuild() => tick.value++;
+}
+
+/// Shown in place of any widget subtree that fails to build, instead of
+/// Flutter's blank grey box. Includes the error and a retry button.
+class _TabErrorView extends StatelessWidget {
+  const _TabErrorView({required this.details});
+
+  final FlutterErrorDetails details;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 48),
+            const SizedBox(height: 12),
+            const Text(
+              'Something went wrong in this tab',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              details.exceptionAsString(),
+              textAlign: TextAlign.center,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: MossErrorRecovery.requestRebuild,
+              child: const Text('Try again'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class MossApp extends StatelessWidget {
@@ -64,7 +135,16 @@ class _MainShellState extends State<MainShell> {
       // floating pill dock — content scrolls underneath it.
       body: Stack(
         children: [
-          IndexedStack(index: _index, children: screens),
+          ValueListenableBuilder<int>(
+            valueListenable: MossErrorRecovery.tick,
+            builder: (_, tick, _) => IndexedStack(
+              // Changing the key remounts the tabs after a "Try again"
+              // on an error screen.
+              key: ValueKey<int>(tick),
+              index: _index,
+              children: screens,
+            ),
+          ),
           Positioned(
             left: 16,
             right: 16,
